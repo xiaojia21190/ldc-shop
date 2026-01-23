@@ -636,7 +636,7 @@
             "refundRejectedBody": "Your refund request for order {{orderId}} was rejected.",
             "refundRejectedBodyWithNote": "Your refund request for order {{orderId}} was rejected. Note: {{adminNote}}",
             "adminMessageTitle": "Admin message",
-            "adminMessageBody": "Admin message: {{body}}"
+            "adminMessageBody": "You received a message from the admin."
         }
     },
     "language": {

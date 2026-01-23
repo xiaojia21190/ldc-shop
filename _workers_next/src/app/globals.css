@@ -427,7 +427,9 @@
   color: hsl(var(--muted-foreground));
   background: hsl(var(--background));
   border-radius: 999px;
-  box-shadow: 0 0 0 2px hsl(var(--background));
+  box-shadow: 0 0 0 3px hsl(var(--background));
+  background-clip: padding-box;
+  z-index: 1;
   transform-origin: left top;
   transition: transform 0.2s ease, color 0.2s ease, top 0.2s ease;
   pointer-events: none;
@@ -445,7 +447,7 @@
 
 .floating-field .peer:focus-visible ~ .floating-label,
 .floating-field .peer:not(:placeholder-shown) ~ .floating-label {
-  top: -0.6rem;
+  top: -0.75rem;
   color: hsl(var(--ring));
   transform: translateY(0) scale(0.95);
 }
