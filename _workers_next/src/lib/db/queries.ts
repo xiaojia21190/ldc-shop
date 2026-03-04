@@ -9,7 +9,7 @@ import { cache } from "react";
 let dbInitialized = false;
 let loginUsersSchemaReady = false;
 let wishlistTablesReady = false;
-const CURRENT_SCHEMA_VERSION = 17;
+const CURRENT_SCHEMA_VERSION = 18;
 type ColumnEnsureKey = 'products' | 'orders' | 'cards' | 'loginUsers';
 const columnEnsureState: Record<ColumnEnsureKey, { ready: boolean; pending: Promise<void> | null }> = {
     products: { ready: false, pending: null },
@@ -149,7 +149,6 @@ async function ensureDatabaseInitialized() {
         await migrateTimestampColumnsToMs();
         await migrateMalformedGitHubUserIds();
         await migrateGitHubUsersDedupAndCanonicalize();
-        await migrateLinuxDoUsersDedupAndCanonicalize();
         await ensureIndexes();
         await backfillProductAggregates();
 
@@ -362,7 +361,6 @@ async function ensureDatabaseInitialized() {
     await migrateTimestampColumnsToMs();
     await migrateMalformedGitHubUserIds();
     await migrateGitHubUsersDedupAndCanonicalize();
-    await migrateLinuxDoUsersDedupAndCanonicalize();
     await ensureIndexes();
     await backfillProductAggregates();
 
@@ -1720,9 +1718,12 @@ function isLinuxDoOfficialIdValue(userId?: string | null): boolean {
     return /^\d+$/.test(userId.trim())
 }
 
-async function resolveLinuxDoOfficialIdByUsername(username: string): Promise<string | null> {
+async function resolveLinuxDoOfficialIdByUsername(username: string, timeoutMs: number = 2500): Promise<string | null> {
     const normalizedUsername = normalizeLinuxDoUsernameValue(username)
     if (!normalizedUsername) return null
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
 
     try {
         const response = await fetch(`https://linux.do/u/${encodeURIComponent(normalizedUsername)}.json`, {
@@ -1730,6 +1731,7 @@ async function resolveLinuxDoOfficialIdByUsername(username: string): Promise<str
                 accept: 'application/json',
                 'user-agent': 'ldc-shop-migrator/1.2.8',
             },
+            signal: controller.signal,
         })
         if (!response.ok) return null
 
@@ -1741,6 +1743,8 @@ async function resolveLinuxDoOfficialIdByUsername(username: string): Promise<str
         return isLinuxDoOfficialIdValue(id) ? id : null
     } catch {
         return null
+    } finally {
+        clearTimeout(timer)
     }
 }
 
@@ -2024,48 +2028,80 @@ async function migrateGitHubUsersDedupAndCanonicalize() {
     }
 }
 
-async function migrateLinuxDoUsersDedupAndCanonicalize() {
+export async function runLinuxDoUserIdMigrationBatch(options?: {
+    maxUsernames?: number
+    maxLookups?: number
+    lookupTimeoutMs?: number
+}) {
     await ensureLoginUsersSchema()
 
-    const linuxDoUsers = await db.select({
-        userId: loginUsers.userId,
-        username: loginUsers.username,
-        email: loginUsers.email,
-        points: loginUsers.points,
-        isBlocked: sql<boolean>`COALESCE(${loginUsers.isBlocked}, FALSE)`,
-        desktopNotificationsEnabled: sql<boolean>`COALESCE(${loginUsers.desktopNotificationsEnabled}, FALSE)`,
-        createdAt: loginUsers.createdAt,
-        lastLoginAt: loginUsers.lastLoginAt,
+    const maxUsernames = Math.max(1, Math.min(50, Number(options?.maxUsernames || 8)))
+    const maxLookups = Math.max(1, Math.min(20, Number(options?.maxLookups || 3)))
+    const lookupTimeoutMs = Math.max(500, Math.min(10000, Number(options?.lookupTimeoutMs || 2500)))
+
+    const targetUsernames = await db.select({
+        username: sql<string>`LOWER(${loginUsers.username})`,
     })
         .from(loginUsers)
-        .where(sql`${loginUsers.username} IS NOT NULL AND LOWER(${loginUsers.username}) NOT LIKE 'gh_%'`)
+        .where(sql`
+            ${loginUsers.username} IS NOT NULL
+            AND LOWER(${loginUsers.username}) NOT LIKE 'gh_%'
+            AND (
+                TRIM(${loginUsers.userId}) = ''
+                OR TRIM(${loginUsers.userId}) GLOB '*[^0-9]*'
+            )
+        `)
+        .groupBy(sql`LOWER(${loginUsers.username})`)
+        .orderBy(sql`COALESCE(MAX(${loginUsers.lastLoginAt}), 0) DESC`)
+        .limit(maxUsernames)
 
-    if (!linuxDoUsers.length) return
+    if (!targetUsernames.length) {
+        return {
+            processedUsernames: 0,
+            migratedUsernames: 0,
+            resolvedByLookup: 0,
+            unresolvedUsernames: 0,
+            pendingUsernames: 0,
+        }
+    }
 
-    const groups = new Map<string, GitHubLoginUserRow[]>()
-    for (const row of linuxDoUsers) {
+    let migratedUsernames = 0
+    let resolvedByLookup = 0
+    let unresolvedUsernames = 0
+    let lookupsUsed = 0
+
+    for (const row of targetUsernames) {
         const normalizedUsername = normalizeLinuxDoUsernameValue(row.username)
         if (!normalizedUsername) continue
 
-        const list = groups.get(normalizedUsername) || []
-        list.push({
-            userId: row.userId,
-            username: row.username,
-            email: row.email || null,
-            points: Number(row.points || 0),
-            isBlocked: !!row.isBlocked,
-            desktopNotificationsEnabled: !!row.desktopNotificationsEnabled,
-            createdAt: row.createdAt || null,
-            lastLoginAt: row.lastLoginAt || null,
+        const rows = await db.select({
+            userId: loginUsers.userId,
+            username: loginUsers.username,
+            email: loginUsers.email,
+            points: loginUsers.points,
+            isBlocked: sql<boolean>`COALESCE(${loginUsers.isBlocked}, FALSE)`,
+            desktopNotificationsEnabled: sql<boolean>`COALESCE(${loginUsers.desktopNotificationsEnabled}, FALSE)`,
+            createdAt: loginUsers.createdAt,
+            lastLoginAt: loginUsers.lastLoginAt,
         })
-        groups.set(normalizedUsername, list)
-    }
+            .from(loginUsers)
+            .where(sql`LOWER(${loginUsers.username}) = ${normalizedUsername}`)
 
-    for (const [normalizedUsername, rows] of groups.entries()) {
         if (!rows.length) continue
 
-        const canonicalCandidates = [...rows]
-            .filter((row) => isLinuxDoOfficialIdValue(row.userId))
+        const normalizedRows: GitHubLoginUserRow[] = rows.map((item) => ({
+            userId: item.userId,
+            username: item.username || null,
+            email: item.email || null,
+            points: Number(item.points || 0),
+            isBlocked: !!item.isBlocked,
+            desktopNotificationsEnabled: !!item.desktopNotificationsEnabled,
+            createdAt: item.createdAt || null,
+            lastLoginAt: item.lastLoginAt || null,
+        }))
+
+        const canonicalCandidates = [...normalizedRows]
+            .filter((item) => isLinuxDoOfficialIdValue(item.userId))
             .sort((a, b) => {
                 const bTime = toEpochMs(b.lastLoginAt) || 0
                 const aTime = toEpochMs(a.lastLoginAt) || 0
@@ -2075,28 +2111,28 @@ async function migrateLinuxDoUsersDedupAndCanonicalize() {
                 return aCreated - bCreated
             })
 
-        const createdCandidates = rows.map((row) => toEpochMs(row.createdAt)).filter((value): value is number => value !== null)
-        const lastLoginCandidates = rows.map((row) => toEpochMs(row.lastLoginAt)).filter((value): value is number => value !== null)
-
         let canonicalUserId = canonicalCandidates[0]?.userId || null
-        if (!canonicalUserId) {
-            // Force migration without requiring users to log in again: resolve official Linux DO id by username.
-            canonicalUserId = await resolveLinuxDoOfficialIdByUsername(normalizedUsername)
-            if (!canonicalUserId) continue
+        if (!canonicalUserId && lookupsUsed < maxLookups) {
+            lookupsUsed += 1
+            canonicalUserId = await resolveLinuxDoOfficialIdByUsername(normalizedUsername, lookupTimeoutMs)
+            if (canonicalUserId) resolvedByLookup += 1
         }
 
-        const canonical = rows.find((row) => row.userId === canonicalUserId) || null
-        const mergedPoints = rows.reduce((sum, row) => sum + Number(row.points || 0), 0)
-        const mergedBlocked = rows.some((row) => row.isBlocked)
-        const mergedDesktopNotifications = rows.some((row) => row.desktopNotificationsEnabled)
-        const mergedEmail = canonical?.email || rows.map((row) => row.email).find((value) => !!value) || null
+        if (!canonicalUserId) {
+            unresolvedUsernames += 1
+            continue
+        }
 
-        const mergedCreatedAt = createdCandidates.length
-            ? new Date(Math.min(...createdCandidates))
-            : (canonical?.createdAt || new Date())
-        const mergedLastLoginAt = lastLoginCandidates.length
-            ? new Date(Math.max(...lastLoginCandidates))
-            : (canonical?.lastLoginAt || new Date())
+        const canonical = normalizedRows.find((item) => item.userId === canonicalUserId) || null
+        const mergedPoints = normalizedRows.reduce((sum, item) => sum + Number(item.points || 0), 0)
+        const mergedBlocked = normalizedRows.some((item) => item.isBlocked)
+        const mergedDesktopNotifications = normalizedRows.some((item) => item.desktopNotificationsEnabled)
+        const mergedEmail = canonical?.email || normalizedRows.map((item) => item.email).find((value) => !!value) || null
+
+        const createdCandidates = normalizedRows.map((item) => toEpochMs(item.createdAt)).filter((value): value is number => value !== null)
+        const lastLoginCandidates = normalizedRows.map((item) => toEpochMs(item.lastLoginAt)).filter((value): value is number => value !== null)
+        const mergedCreatedAt = createdCandidates.length ? new Date(Math.min(...createdCandidates)) : (canonical?.createdAt || new Date())
+        const mergedLastLoginAt = lastLoginCandidates.length ? new Date(Math.max(...lastLoginCandidates)) : (canonical?.lastLoginAt || new Date())
 
         if (!canonical) {
             const createdAtMs = toEpochMs(mergedCreatedAt) || Date.now()
@@ -2167,10 +2203,34 @@ async function migrateLinuxDoUsersDedupAndCanonicalize() {
               AND (username IS NULL OR LOWER(username) <> ${normalizedUsername})
         `)
 
-        for (const row of rows) {
-            if (row.userId === canonicalUserId) continue
-            await moveUserReferences(row.userId, canonicalUserId)
+        let moved = false
+        for (const item of normalizedRows) {
+            if (item.userId === canonicalUserId) continue
+            moved = true
+            await moveUserReferences(item.userId, canonicalUserId)
         }
+        if (moved || !canonical) migratedUsernames += 1
+    }
+
+    const pendingRows = await db.select({
+        count: sql<number>`COUNT(DISTINCT LOWER(${loginUsers.username}))`,
+    })
+        .from(loginUsers)
+        .where(sql`
+            ${loginUsers.username} IS NOT NULL
+            AND LOWER(${loginUsers.username}) NOT LIKE 'gh_%'
+            AND (
+                TRIM(${loginUsers.userId}) = ''
+                OR TRIM(${loginUsers.userId}) GLOB '*[^0-9]*'
+            )
+        `)
+
+    return {
+        processedUsernames: targetUsernames.length,
+        migratedUsernames,
+        resolvedByLookup,
+        unresolvedUsernames,
+        pendingUsernames: Number(pendingRows[0]?.count || 0),
     }
 }
 
