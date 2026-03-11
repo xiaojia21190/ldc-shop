@@ -710,6 +710,9 @@
         "emailInvalid": "邮箱格式不正确",
         "trustLevel": "信任等级",
         "inboxTitle": "收件箱",
+        "sentTitle": "已发送",
+        "sentEmpty": "暂无已发送消息",
+        "settingsTitle": "设置",
         "inboxEmpty": "暂无通知",
         "markAllRead": "全部已读",
         "inboxMarked": "已标记全部为已读",
@@ -732,6 +735,8 @@
         },
         "messages": {
             "title": "联系管理员",
+            "compose": "写消息",
+            "noTitle": "（无标题）",
             "titleLabel": "标题",
             "titlePlaceholder": "请输入标题",
             "bodyLabel": "内容",

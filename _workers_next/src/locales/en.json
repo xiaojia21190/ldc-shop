@@ -710,6 +710,9 @@
         "emailInvalid": "Invalid email format",
         "trustLevel": "Trust Level",
         "inboxTitle": "Inbox",
+        "sentTitle": "Sent",
+        "sentEmpty": "No sent messages yet.",
+        "settingsTitle": "Settings",
         "inboxEmpty": "No notifications yet.",
         "markAllRead": "Mark all read",
         "inboxMarked": "All notifications marked as read",
@@ -732,6 +735,8 @@
         },
         "messages": {
             "title": "Contact Admin",
+            "compose": "Compose",
+            "noTitle": "(No title)",
             "titleLabel": "Title",
             "titlePlaceholder": "Enter a title",
             "bodyLabel": "Message",

@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { Coins, Package, Clock, CheckCircle, ChevronRight, User, LogOut, Bell } from "lucide-react"
+import { Coins, Package, Clock, CheckCircle, ChevronRight, User, LogOut, Bell, Mail, Send, MessageSquarePlus, Settings } from "lucide-react"
 import { signOut } from "next-auth/react"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -44,10 +44,16 @@ interface ProfileContentProps {
         isRead: boolean | null
         createdAt: number | null
     }>
+    sentMessages: Array<{
+        id: number
+        title: string
+        body: string
+        createdAt: number | null
+    }>
     desktopNotificationsEnabled: boolean
 }
 
-export function ProfileContent({ user, points, checkinEnabled, orderStats, notifications: initialNotifications, desktopNotificationsEnabled }: ProfileContentProps) {
+export function ProfileContent({ user, points, checkinEnabled, orderStats, notifications: initialNotifications, sentMessages: initialSentMessages, desktopNotificationsEnabled }: ProfileContentProps) {
     const { t } = useI18n()
     const [email, setEmail] = useState(user.email || '')
     const [savingEmail, setSavingEmail] = useState(false)
@@ -60,8 +66,13 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
     const [msgTitle, setMsgTitle] = useState("")
     const [msgBody, setMsgBody] = useState("")
     const [msgSending, setMsgSending] = useState(false)
+    const [showComposeForm, setShowComposeForm] = useState(false)
+    const [showSettings, setShowSettings] = useState(false)
     const [desktopEnabled, setDesktopEnabled] = useState(desktopNotificationsEnabled)
     const [desktopSaving, setDesktopSaving] = useState(false)
+    const [sentMessages, setSentMessages] = useState(initialSentMessages)
+    const [expandedSentIds, setExpandedSentIds] = useState<number[]>([])
+    const [msgTab, setMsgTab] = useState<'inbox' | 'sent'>('inbox')
     const notifiedIdsRef = useRef<Set<number>>(new Set())
 
     const unreadCount = notifications.filter((n) => !n.isRead).length
@@ -69,7 +80,7 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
     const parseNotificationData = (data: string | null) => {
         if (!data) return {}
         try {
-            return JSON.parse(data) as { params?: Record<string, string | number>; href?: string }
+            return JSON.parse(data) as { params?: Record<string, string | number>; href?: string; title?: string; body?: string }
         } catch {
             return {}
         }
@@ -88,7 +99,6 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
         try {
             const res = await markNotificationRead(id)
             if (!res?.success) {
-                // revert if failed
                 setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: false } : n)))
             }
             emitNotificationUpdate()
@@ -182,9 +192,9 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
     }
 
     return (
-        <main className="container py-8 max-w-2xl">
-            {/* User Info */}
-            <Card className="mb-6">
+        <main className="container py-8 max-w-2xl space-y-6">
+            {/* User Info + Stats */}
+            <Card>
                 <CardContent className="pt-6">
                     <div className="flex items-center gap-4">
                         <Avatar className="h-16 w-16">
@@ -218,303 +228,385 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
                             </div>
                         </div>
                     </div>
-                </CardContent>
-            </Card>
 
-            {/* Email */}
-            <Card className="mb-6">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-base">{t('profile.emailTitle')}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="floating-field">
-                        <Input
-                            id="profile-email"
-                            type="email"
-                            placeholder=" "
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            disabled={savingEmail}
-                        />
-                        <Label htmlFor="profile-email" className="floating-label">{t('profile.emailLabel')}</Label>
-                        <p className="text-xs text-muted-foreground">{t('profile.emailHint')}</p>
-                        <Button
-                            variant="outline"
-                            className="mt-2"
-                            disabled={savingEmail}
-                            onClick={async () => {
-                                setSavingEmail(true)
-                                try {
-                                    const result = await updateProfileEmail(email)
-                                    if (result?.success) {
-                                        toast.success(t('profile.emailSaved'))
-                                    } else {
-                                        toast.error(result?.error ? t(result.error) : t('common.error'))
-                                    }
-                                } catch {
-                                    toast.error(t('common.error'))
-                                } finally {
-                                    setSavingEmail(false)
-                                }
-                            }}
-                        >
-                            {t('profile.emailSave')}
-                        </Button>
+                    {/* Order Stats inline */}
+                    <div className="mt-5 pt-5 border-t">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-sm font-medium">{t('common.myOrders')}</span>
+                            <Link href="/orders">
+                                <Button variant="ghost" size="sm" className="text-muted-foreground h-7 text-xs">
+                                    {t('common.viewOrders')} <ChevronRight className="h-3 w-3 ml-0.5" />
+                                </Button>
+                            </Link>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                            <div className="p-2.5 rounded-lg bg-muted/50">
+                                <Package className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
+                                <p className="text-xl font-bold">{orderStats.total}</p>
+                                <p className="text-[11px] text-muted-foreground">{t('admin.stats.total')}</p>
+                            </div>
+                            <div className="p-2.5 rounded-lg bg-muted/50">
+                                <Clock className="h-4 w-4 mx-auto mb-1 text-yellow-600" />
+                                <p className="text-xl font-bold">{orderStats.pending}</p>
+                                <p className="text-[11px] text-muted-foreground">{t('order.status.pending')}</p>
+                            </div>
+                            <div className="p-2.5 rounded-lg bg-muted/50">
+                                <CheckCircle className="h-4 w-4 mx-auto mb-1 text-green-600" />
+                                <p className="text-xl font-bold">{orderStats.delivered}</p>
+                                <p className="text-[11px] text-muted-foreground">{t('order.status.delivered')}</p>
+                            </div>
+                        </div>
                     </div>
                 </CardContent>
             </Card>
 
-            {/* Desktop Notifications */}
-            <Card className="mb-6">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-base">{t('profile.desktopNotifications.title')}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex items-center justify-between gap-4">
-                        <p className="text-sm text-muted-foreground">{t('profile.desktopNotifications.desc')}</p>
-                        <Button
-                            type="button"
-                            variant={desktopEnabled ? "default" : "outline"}
-                            size="sm"
-                            onClick={handleToggleDesktopNotifications}
-                            disabled={desktopSaving}
-                        >
-                            {desktopEnabled ? t('profile.desktopNotifications.enabled') : t('profile.desktopNotifications.disabled')}
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Order Stats */}
-            <Card className="mb-6">
+            {/* Messages: Inbox + Sent + Compose */}
+            <Card>
                 <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center justify-between">
-                        <span>{t('common.myOrders')}</span>
-                        <Link href="/orders">
-                            <Button variant="ghost" size="sm" className="text-muted-foreground">
-                                {t('common.viewOrders')} <ChevronRight className="h-4 w-4 ml-1" />
+                        <div className="flex items-center gap-1">
+                            <Button
+                                variant={msgTab === 'inbox' ? 'default' : 'ghost'}
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={() => setMsgTab('inbox')}
+                            >
+                                <Bell className="h-3.5 w-3.5" />
+                                {t('profile.inboxTitle')}
+                                {unreadCount > 0 && (
+                                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white px-1">
+                                        {unreadCount > 99 ? "99+" : unreadCount}
+                                    </span>
+                                )}
                             </Button>
-                        </Link>
+                            <Button
+                                variant={msgTab === 'sent' ? 'default' : 'ghost'}
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={() => setMsgTab('sent')}
+                            >
+                                <Send className="h-3.5 w-3.5" />
+                                {t('profile.sentTitle')}
+                                {sentMessages.length > 0 && (
+                                    <span className="text-xs text-muted-foreground">({sentMessages.length})</span>
+                                )}
+                            </Button>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            {msgTab === 'inbox' && notifications.length > 0 && (
+                                <>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 text-xs"
+                                        disabled={markingAll || unreadCount === 0}
+                                        onClick={async () => {
+                                            if (markingAll || unreadCount === 0) return
+                                            setMarkingAll(true)
+                                            try {
+                                                const res = await markAllNotificationsRead()
+                                                if (res?.success) {
+                                                    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+                                                    emitNotificationUpdate()
+                                                    toast.success(t('profile.inboxMarked'))
+                                                } else {
+                                                    toast.error(t('common.error'))
+                                                }
+                                            } catch {
+                                                toast.error(t('common.error'))
+                                            } finally {
+                                                setMarkingAll(false)
+                                            }
+                                        }}
+                                    >
+                                        {t('profile.markAllRead')}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 text-xs"
+                                        disabled={clearing}
+                                        onClick={async () => {
+                                            if (clearing) return
+                                            setClearing(true)
+                                            try {
+                                                const res = await clearMyNotifications()
+                                                if (res?.success) {
+                                                    setNotifications([])
+                                                    emitNotificationUpdate()
+                                                    toast.success(t('profile.inboxCleared'))
+                                                } else {
+                                                    toast.error(t('common.error'))
+                                                }
+                                            } catch {
+                                                toast.error(t('common.error'))
+                                            } finally {
+                                                setClearing(false)
+                                            }
+                                        }}
+                                    >
+                                        {t('profile.clearInbox')}
+                                    </Button>
+                                </>
+                            )}
+                            <Button
+                                variant={showComposeForm ? 'secondary' : 'outline'}
+                                size="sm"
+                                className="gap-1.5 h-7"
+                                onClick={() => setShowComposeForm(!showComposeForm)}
+                            >
+                                <MessageSquarePlus className="h-3.5 w-3.5" />
+                                {t('profile.messages.compose')}
+                            </Button>
+                        </div>
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                        <div className="p-3 rounded-lg bg-muted/50">
-                            <Package className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
-                            <p className="text-2xl font-bold">{orderStats.total}</p>
-                            <p className="text-xs text-muted-foreground">{t('admin.stats.total')}</p>
-                        </div>
-                        <div className="p-3 rounded-lg bg-muted/50">
-                            <Clock className="h-5 w-5 mx-auto mb-1 text-yellow-600" />
-                            <p className="text-2xl font-bold">{orderStats.pending}</p>
-                            <p className="text-xs text-muted-foreground">{t('order.status.pending')}</p>
-                        </div>
-                        <div className="p-3 rounded-lg bg-muted/50">
-                            <CheckCircle className="h-5 w-5 mx-auto mb-1 text-green-600" />
-                            <p className="text-2xl font-bold">{orderStats.delivered}</p>
-                            <p className="text-xs text-muted-foreground">{t('order.status.delivered')}</p>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Inbox */}
-            <Card className="mb-6">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center justify-between">
-                        <span className="flex items-center gap-2">
-                            <Bell className="h-4 w-4 text-muted-foreground" />
-                            {t('profile.inboxTitle')}
-                            {unreadCount > 0 && (
-                                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white px-1">
-                                    {unreadCount > 99 ? "99+" : unreadCount}
-                                </span>
-                            )}
-                        </span>
-                        {notifications.length > 0 && (
-                            <div className="flex items-center gap-2">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    disabled={markingAll || unreadCount === 0}
-                                    onClick={async () => {
-                                        if (markingAll || unreadCount === 0) return
-                                        setMarkingAll(true)
-                                        try {
-                                            const res = await markAllNotificationsRead()
-                                            if (res?.success) {
-                                                setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
-                                                emitNotificationUpdate()
-                                                toast.success(t('profile.inboxMarked'))
-                                            } else {
-                                                toast.error(t('common.error'))
-                                            }
-                                        } catch {
-                                            toast.error(t('common.error'))
-                                        } finally {
-                                            setMarkingAll(false)
-                                        }
-                                    }}
-                                >
-                                    {t('profile.markAllRead')}
+                    {/* Compose Form (collapsible) */}
+                    {showComposeForm && (
+                        <div className="mb-4 rounded-lg border p-4 space-y-3 bg-muted/30">
+                            <h4 className="text-sm font-medium">{t('profile.messages.title')}</h4>
+                            <Input
+                                value={msgTitle}
+                                onChange={(e) => setMsgTitle(e.target.value)}
+                                placeholder={t('profile.messages.titlePlaceholder')}
+                                disabled={msgSending}
+                            />
+                            <Textarea
+                                className="min-h-[100px] resize-none"
+                                placeholder={t('profile.messages.bodyPlaceholder')}
+                                value={msgBody}
+                                onChange={(e) => setMsgBody(e.target.value)}
+                                disabled={msgSending}
+                            />
+                            <div className="flex justify-end gap-2">
+                                <Button variant="ghost" size="sm" onClick={() => setShowComposeForm(false)}>
+                                    {t('common.cancel')}
                                 </Button>
                                 <Button
-                                    variant="ghost"
                                     size="sm"
-                                    disabled={clearing}
+                                    disabled={msgSending}
                                     onClick={async () => {
-                                        if (clearing) return
-                                        setClearing(true)
+                                        if (msgSending) return
+                                        setMsgSending(true)
                                         try {
-                                            const res = await clearMyNotifications()
+                                            const res = await sendUserMessage(msgTitle, msgBody)
                                             if (res?.success) {
-                                                setNotifications([])
-                                                emitNotificationUpdate()
-                                                toast.success(t('profile.inboxCleared'))
+                                                toast.success(t('profile.messages.sent'))
+                                                setSentMessages((prev) => [{
+                                                    id: Date.now(),
+                                                    title: msgTitle,
+                                                    body: msgBody,
+                                                    createdAt: Date.now()
+                                                }, ...prev])
+                                                setMsgTitle("")
+                                                setMsgBody("")
+                                                setShowComposeForm(false)
                                             } else {
-                                                toast.error(t('common.error'))
+                                                toast.error(res?.error ? t(res.error) : t('common.error'))
                                             }
                                         } catch {
                                             toast.error(t('common.error'))
                                         } finally {
-                                            setClearing(false)
+                                            setMsgSending(false)
                                         }
                                     }}
                                 >
-                                    {t('profile.clearInbox')}
+                                    {msgSending ? t('common.processing') : t('profile.messages.send')}
                                 </Button>
                             </div>
-                        )}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    {notifications.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">{t('profile.inboxEmpty')}</p>
-                    ) : (
-                        <div className="space-y-3">
-                            {notifications.map((n) => {
-                                const meta = parseNotificationData(n.data)
-                                const params = meta.params || {}
-                                const title = typeof (meta as any).title === "string" && (meta as any).title.trim()
-                                    ? (meta as any).title
-                                    : t(n.titleKey, params)
-                                const content = typeof (meta as any).body === "string" && (meta as any).body.trim()
-                                    ? (meta as any).body
-                                    : t(n.contentKey, params)
-                                const time = n.createdAt ? new Date(n.createdAt).toLocaleString() : '-'
-                                const isExpanded = expandedIds.includes(n.id)
-                                const contentClass = cn(
-                                    "text-sm text-muted-foreground mt-1 break-words whitespace-pre-wrap",
-                                    !isExpanded ? "line-clamp-2" : ""
-                                )
-                                const body = (
-                                    <div className={`rounded-lg border p-3 ${n.isRead ? "bg-muted/30" : "bg-primary/5 border-primary/30"}`}>
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="font-medium">{title}</span>
-                                                    {!n.isRead && (
-                                                        <Badge variant="outline" className="text-[10px] text-primary border-primary/50">
-                                                            {t('profile.unread')}
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                                <p className={contentClass}>{content}</p>
-                                                <p className="text-xs text-muted-foreground mt-2">{time}</p>
-                                            </div>
-                                            {meta.href && (
-                                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
-                                            )}
-                                        </div>
-                                    </div>
-                                )
-
-                                return meta.href ? (
-                                    <Link
-                                        key={n.id}
-                                        href={meta.href}
-                                        className="block"
-                                        onClick={() => {
-                                            if (!n.isRead) void handleMarkRead(n.id)
-                                        }}
-                                    >
-                                        {body}
-                                    </Link>
-                                ) : (
-                                    <div
-                                        key={n.id}
-                                        onClick={() => {
-                                            if (!n.isRead) void handleMarkRead(n.id)
-                                            setExpandedIds((prev) =>
-                                                prev.includes(n.id) ? prev.filter((x) => x !== n.id) : [...prev, n.id]
-                                            )
-                                        }}
-                                    >
-                                        {body}
-                                    </div>
-                                )
-                            })}
                         </div>
+                    )}
+
+                    {/* Inbox Tab */}
+                    {msgTab === 'inbox' && (
+                        notifications.length === 0 ? (
+                            <p className="text-sm text-muted-foreground py-4 text-center">{t('profile.inboxEmpty')}</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {notifications.map((n) => {
+                                    const meta = parseNotificationData(n.data)
+                                    const params = meta.params || {}
+                                    const title = typeof meta.title === "string" && meta.title.trim()
+                                        ? meta.title
+                                        : t(n.titleKey, params)
+                                    const content = typeof meta.body === "string" && meta.body.trim()
+                                        ? meta.body
+                                        : t(n.contentKey, params)
+                                    const time = n.createdAt ? new Date(n.createdAt).toLocaleString() : '-'
+                                    const isExpanded = expandedIds.includes(n.id)
+                                    const contentClass = cn(
+                                        "text-sm text-muted-foreground mt-1 break-words whitespace-pre-wrap",
+                                        !isExpanded ? "line-clamp-2" : ""
+                                    )
+                                    const body = (
+                                        <div className={`rounded-lg border p-3 ${n.isRead ? "bg-muted/30" : "bg-primary/5 border-primary/30"}`}>
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-medium text-sm">{title}</span>
+                                                        {!n.isRead && (
+                                                            <Badge variant="outline" className="text-[10px] text-primary border-primary/50">
+                                                                {t('profile.unread')}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <p className={contentClass}>{content}</p>
+                                                    <p className="text-xs text-muted-foreground mt-1.5">{time}</p>
+                                                </div>
+                                                {meta.href && (
+                                                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
+                                                )}
+                                            </div>
+                                        </div>
+                                    )
+
+                                    return meta.href ? (
+                                        <Link
+                                            key={n.id}
+                                            href={meta.href}
+                                            className="block"
+                                            onClick={() => {
+                                                if (!n.isRead) void handleMarkRead(n.id)
+                                            }}
+                                        >
+                                            {body}
+                                        </Link>
+                                    ) : (
+                                        <div
+                                            key={n.id}
+                                            className="cursor-pointer"
+                                            onClick={() => {
+                                                if (!n.isRead) void handleMarkRead(n.id)
+                                                setExpandedIds((prev) =>
+                                                    prev.includes(n.id) ? prev.filter((x) => x !== n.id) : [...prev, n.id]
+                                                )
+                                            }}
+                                        >
+                                            {body}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )
+                    )}
+
+                    {/* Sent Tab */}
+                    {msgTab === 'sent' && (
+                        sentMessages.length === 0 ? (
+                            <p className="text-sm text-muted-foreground py-4 text-center">{t('profile.sentEmpty')}</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {sentMessages.map((m) => {
+                                    const isExpanded = expandedSentIds.includes(m.id)
+                                    return (
+                                        <div
+                                            key={m.id}
+                                            className="rounded-lg border p-3 bg-muted/30 cursor-pointer"
+                                            onClick={() =>
+                                                setExpandedSentIds((prev) =>
+                                                    prev.includes(m.id) ? prev.filter((x) => x !== m.id) : [...prev, m.id]
+                                                )
+                                            }
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Send className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                                <span className="font-medium text-sm truncate">{m.title || t('profile.messages.noTitle')}</span>
+                                            </div>
+                                            <p className={cn(
+                                                "text-sm text-muted-foreground mt-1 break-words whitespace-pre-wrap",
+                                                !isExpanded ? "line-clamp-2" : ""
+                                            )}>
+                                                {m.body}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mt-1.5">
+                                                {m.createdAt ? new Date(m.createdAt).toLocaleString() : '-'}
+                                            </p>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )
                     )}
                 </CardContent>
             </Card>
 
-            {/* Contact Admin */}
-            <Card className="mb-6">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-base">{t('profile.messages.title')}</CardTitle>
+            {/* Settings (collapsible) */}
+            <Card>
+                <CardHeader className="pb-0">
+                    <CardTitle
+                        className="text-base flex items-center justify-between cursor-pointer"
+                        onClick={() => setShowSettings(!showSettings)}
+                    >
+                        <span className="flex items-center gap-2">
+                            <Settings className="h-4 w-4 text-muted-foreground" />
+                            {t('profile.settingsTitle')}
+                        </span>
+                        <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform", showSettings && "rotate-90")} />
+                    </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                    <div className="grid gap-2">
-                        <Label htmlFor="msg-title">{t('profile.messages.titleLabel')}</Label>
-                        <Input
-                            id="msg-title"
-                            value={msgTitle}
-                            onChange={(e) => setMsgTitle(e.target.value)}
-                            placeholder={t('profile.messages.titlePlaceholder')}
-                            disabled={msgSending}
-                        />
-                    </div>
-                    <div className="grid gap-2">
-                        <Label htmlFor="msg-body">{t('profile.messages.bodyLabel')}</Label>
-                        <Textarea
-                            id="msg-body"
-                            className="min-h-[120px]"
-                            placeholder={t('profile.messages.bodyPlaceholder')}
-                            value={msgBody}
-                            onChange={(e) => setMsgBody(e.target.value)}
-                            disabled={msgSending}
-                        />
-                    </div>
-                    <div className="flex justify-end">
-                        <Button
-                            disabled={msgSending}
-                            onClick={async () => {
-                                if (msgSending) return
-                                setMsgSending(true)
-                                try {
-                                    const res = await sendUserMessage(msgTitle, msgBody)
-                                    if (res?.success) {
-                                        toast.success(t('profile.messages.sent'))
-                                        setMsgTitle("")
-                                        setMsgBody("")
-                                    } else {
-                                        toast.error(res?.error ? t(res.error) : t('common.error'))
-                                    }
-                                } catch {
-                                    toast.error(t('common.error'))
-                                } finally {
-                                    setMsgSending(false)
-                                }
-                            }}
-                        >
-                            {msgSending ? t('common.processing') : t('profile.messages.send')}
-                        </Button>
-                    </div>
-                </CardContent>
+                {showSettings && (
+                    <CardContent className="pt-4 space-y-5">
+                        {/* Email */}
+                        <div>
+                            <Label htmlFor="profile-email" className="text-sm font-medium">{t('profile.emailTitle')}</Label>
+                            <div className="mt-2 flex gap-2">
+                                <Input
+                                    id="profile-email"
+                                    type="email"
+                                    placeholder={t('profile.emailLabel')}
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    disabled={savingEmail}
+                                    className="flex-1"
+                                />
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={savingEmail}
+                                    onClick={async () => {
+                                        setSavingEmail(true)
+                                        try {
+                                            const result = await updateProfileEmail(email)
+                                            if (result?.success) {
+                                                toast.success(t('profile.emailSaved'))
+                                            } else {
+                                                toast.error(result?.error ? t(result.error) : t('common.error'))
+                                            }
+                                        } catch {
+                                            toast.error(t('common.error'))
+                                        } finally {
+                                            setSavingEmail(false)
+                                        }
+                                    }}
+                                >
+                                    {t('profile.emailSave')}
+                                </Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{t('profile.emailHint')}</p>
+                        </div>
+
+                        {/* Desktop Notifications */}
+                        <div className="flex items-center justify-between gap-4 pt-2 border-t">
+                            <div>
+                                <p className="text-sm font-medium">{t('profile.desktopNotifications.title')}</p>
+                                <p className="text-xs text-muted-foreground">{t('profile.desktopNotifications.desc')}</p>
+                            </div>
+                            <Button
+                                type="button"
+                                variant={desktopEnabled ? "default" : "outline"}
+                                size="sm"
+                                onClick={handleToggleDesktopNotifications}
+                                disabled={desktopSaving}
+                            >
+                                {desktopEnabled ? t('profile.desktopNotifications.enabled') : t('profile.desktopNotifications.disabled')}
+                            </Button>
+                        </div>
+                    </CardContent>
+                )}
             </Card>
 
-            {/* Logout Button */}
+            {/* Logout */}
             <Button
                 variant="outline"
                 className="w-full"

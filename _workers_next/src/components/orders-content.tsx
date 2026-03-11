@@ -5,7 +5,8 @@ import { useI18n } from "@/lib/i18n/context"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { CreditCard, Package, Search, Star } from "lucide-react"
+import { CreditCard, Search, Star } from "lucide-react"
+import { ProductImagePlaceholder } from "@/components/product-image-placeholder"
 import { ClientDate } from "@/components/client-date"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -106,7 +107,7 @@ export function OrdersContent({ orders, productVariantLabels = {}, productImages
                         <Card key={order.orderId} className="hover:border-primary/50 transition-colors">
                             <Link href={`/order/${order.orderId}`}>
                                 <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
-                                    <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center shrink-0 overflow-hidden">
+                                    <div className="h-12 w-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
                                         {!isPaymentOrder(order.productId) && order.productId && productImages[order.productId] ? (
                                             <img
                                                 src={productImages[order.productId]!}
@@ -114,9 +115,11 @@ export function OrdersContent({ orders, productVariantLabels = {}, productImages
                                                 className="h-full w-full object-cover"
                                             />
                                         ) : isPaymentOrder(order.productId) ? (
-                                            <CreditCard className="h-6 w-6 text-muted-foreground" />
+                                            <div className="h-full w-full bg-muted flex items-center justify-center">
+                                                <CreditCard className="h-6 w-6 text-muted-foreground" />
+                                            </div>
                                         ) : (
-                                            <Package className="h-6 w-6 text-muted-foreground" />
+                                            <ProductImagePlaceholder productId={order.productId || order.orderId} productName={order.productName} size="xs" />
                                         )}
                                     </div>
                                     <div className="flex-1 min-w-0">

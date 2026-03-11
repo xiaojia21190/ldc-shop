@@ -1,8 +1,8 @@
 import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { db } from "@/lib/db"
-import { orders, loginUsers } from "@/lib/db/schema"
-import { eq, sql } from "drizzle-orm"
+import { orders, loginUsers, userMessages } from "@/lib/db/schema"
+import { eq, sql, desc } from "drizzle-orm"
 import { getLoginUserEmail, getLoginUserDesktopNotificationsEnabled, getSetting, getUserNotifications } from "@/lib/db/queries"
 import { ProfileContent } from "@/components/profile-content"
 import { unstable_noStore } from "next/cache"
@@ -96,6 +96,28 @@ export default async function ProfilePage() {
         notifications = []
     }
 
+    let sentMessages: Array<{ id: number; title: string; body: string; createdAt: number | null }> = []
+    try {
+        const rows = await db.select({
+            id: userMessages.id,
+            title: userMessages.title,
+            body: userMessages.body,
+            createdAt: userMessages.createdAt
+        })
+            .from(userMessages)
+            .where(eq(userMessages.userId, userId))
+            .orderBy(desc(userMessages.createdAt))
+            .limit(20)
+        sentMessages = rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            body: r.body,
+            createdAt: r.createdAt ? new Date(r.createdAt as any).getTime() : null
+        }))
+    } catch {
+        sentMessages = []
+    }
+
     return (
         <ProfileContent
             user={{
@@ -110,6 +132,7 @@ export default async function ProfilePage() {
             checkinEnabled={checkinEnabled}
             orderStats={orderStats}
             notifications={notifications}
+            sentMessages={sentMessages}
             desktopNotificationsEnabled={desktopNotificationsEnabled}
         />
     )
