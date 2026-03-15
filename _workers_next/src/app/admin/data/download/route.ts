@@ -1,7 +1,24 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { orders, reviews, settings, products, cards, loginUsers, categories, refundRequests, dailyCheckins } from "@/lib/db/schema"
+import {
+  orders,
+  reviews,
+  settings,
+  products,
+  cards,
+  loginUsers,
+  categories,
+  refundRequests,
+  dailyCheckins,
+  userNotifications,
+  userMessages,
+  adminMessages,
+  broadcastMessages,
+  broadcastReads,
+  wishlistItems,
+  wishlistVotes,
+} from "@/lib/db/schema"
 import { and, desc, eq, or, sql } from "drizzle-orm"
 import { getProducts, normalizeTimestampMs } from "@/lib/db/queries"
 
@@ -36,6 +53,15 @@ function toCsv(headers: string[], rows: Array<Record<string, any>>): string {
     lines.push(headers.map((h) => csvEscape(row[h])).join(","))
   }
   return lines.join("\n") + "\n"
+}
+
+function csvResponse(csv: string, filename: string) {
+  return new NextResponse(`\uFEFF${csv}`, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  })
 }
 
 function escapeString(val: string): string {
@@ -138,12 +164,7 @@ export async function GET(req: Request) {
           "userId",
         ]
         const csv = toCsv(headers, mapped as any)
-        return new NextResponse(csv, {
-          headers: {
-            "Content-Type": "text/csv; charset=utf-8",
-            "Content-Disposition": `attachment; filename="orders${includeSecrets ? "-with-secrets" : ""}.csv"`,
-          },
-        })
+        return csvResponse(csv, `orders${includeSecrets ? "-with-secrets" : ""}.csv`)
       }
     }
 
@@ -188,12 +209,7 @@ export async function GET(req: Request) {
           "sold",
         ]
         const csv = toCsv(headers, mapped as any)
-        return new NextResponse(csv, {
-          headers: {
-            "Content-Type": "text/csv; charset=utf-8",
-            "Content-Disposition": `attachment; filename="products.csv"`,
-          },
-        })
+        return csvResponse(csv, "products.csv")
       }
     }
 
@@ -232,12 +248,7 @@ export async function GET(req: Request) {
           "createdAt",
         ]
         const csv = toCsv(headers, mapped as any)
-        return new NextResponse(csv, {
-          headers: {
-            "Content-Type": "text/csv; charset=utf-8",
-            "Content-Disposition": `attachment; filename="reviews.csv"`,
-          },
-        })
+        return csvResponse(csv, "reviews.csv")
       }
     }
 
@@ -260,13 +271,20 @@ export async function GET(req: Request) {
     if (type === "full") {
       const full: Record<string, any[]> = {}
       const tables: Array<[string, () => Promise<any[]>]> = [
+        ["categories", () => db.select().from(categories).all()],
         ["products", () => db.select().from(products).all()],
         ["cards", () => db.select().from(cards).all()],
         ["orders", () => db.select().from(orders).all()],
         ["reviews", () => db.select().from(reviews).all()],
         ["settings", () => db.select().from(settings).all()],
         ["login_users", () => db.select().from(loginUsers).all()],
-        ["categories", () => db.select().from(categories).all()],
+        ["user_notifications", () => db.select().from(userNotifications).all()],
+        ["user_messages", () => db.select().from(userMessages).all()],
+        ["admin_messages", () => db.select().from(adminMessages).all()],
+        ["broadcast_messages", () => db.select().from(broadcastMessages).all()],
+        ["broadcast_reads", () => db.select().from(broadcastReads).all()],
+        ["wishlist_items", () => db.select().from(wishlistItems).all()],
+        ["wishlist_votes", () => db.select().from(wishlistVotes).all()],
         ["refund_requests", () => db.select().from(refundRequests).all()],
         ["daily_checkins_v2", () => db.select().from(dailyCheckins).all()],
       ]
@@ -298,6 +316,11 @@ export async function GET(req: Request) {
 
         // Map camelCase keys to snake_case for SQL export
         const columnMapping: Record<string, string> = {
+          userId: 'user_id',
+          productId: 'product_id',
+          orderId: 'order_id',
+          itemId: 'item_id',
+          messageId: 'message_id',
           // Products
           compareAtPrice: 'compare_at_price',
           isHot: 'is_hot',
@@ -306,36 +329,51 @@ export async function GET(req: Request) {
           sortOrder: 'sort_order',
           purchaseLimit: 'purchase_limit',
           purchaseWarning: 'purchase_warning',
+          visibilityLevel: 'visibility_level',
+          stockCount: 'stock_count',
+          lockedCount: 'locked_count',
+          soldCount: 'sold_count',
+          reviewCount: 'review_count',
+          variantGroupId: 'variant_group_id',
+          variantLabel: 'variant_label',
+          purchaseQuestions: 'purchase_questions',
           createdAt: 'created_at',
           // Cards
-          productId: 'product_id',
           cardKey: 'card_key',
           isUsed: 'is_used',
           reservedOrderId: 'reserved_order_id',
           reservedAt: 'reserved_at',
+          expiresAt: 'expires_at',
           usedAt: 'used_at',
           // Orders
-          orderId: 'order_id',
           productName: 'product_name',
           tradeNo: 'trade_no',
           paidAt: 'paid_at',
           deliveredAt: 'delivered_at',
-          userId: 'user_id',
           pointsUsed: 'points_used',
           currentPaymentId: 'current_payment_id',
+          cardIds: 'card_ids',
           // Reviews
           // orderId, productId, userId already covered
           // Settings
           updatedAt: 'updated_at',
           // Login Users
           lastLoginAt: 'last_login_at',
+          lastCheckinAt: 'last_checkin_at',
+          consecutiveDays: 'consecutive_days',
           isBlocked: 'is_blocked',
-          // Categories
-          // icon, sortOrder already covered or simple
+          desktopNotificationsEnabled: 'desktop_notifications_enabled',
           // Refund Requests
           adminUsername: 'admin_username',
           adminNote: 'admin_note',
           processedAt: 'processed_at',
+          // Notification / message tables
+          titleKey: 'title_key',
+          contentKey: 'content_key',
+          isRead: 'is_read',
+          // Broadcast / admin messages
+          targetType: 'target_type',
+          targetValue: 'target_value',
         }
 
         for (const [tableName, rows] of Object.entries(full)) {

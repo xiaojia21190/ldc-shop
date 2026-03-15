@@ -22,7 +22,7 @@ async function repairTimestamps() {
         { table: 'products', cols: ['created_at'] },
         { table: 'cards', cols: ['created_at', 'reserved_at', 'expires_at', 'used_at'] },
         { table: 'orders', cols: ['created_at', 'paid_at', 'delivered_at'] },
-        { table: 'login_users', cols: ['created_at', 'last_login_at'] },
+        { table: 'login_users', cols: ['created_at', 'last_login_at', 'last_checkin_at'] },
         { table: 'daily_checkins_v2', cols: ['created_at'] },
         { table: 'settings', cols: ['updated_at'] },
         { table: 'reviews', cols: ['created_at'] },
@@ -33,6 +33,8 @@ async function repairTimestamps() {
         { table: 'admin_messages', cols: ['created_at'] },
         { table: 'broadcast_messages', cols: ['created_at'] },
         { table: 'broadcast_reads', cols: ['created_at'] },
+        { table: 'wishlist_items', cols: ['created_at'] },
+        { table: 'wishlist_votes', cols: ['created_at'] },
     ]
 
     for (const { table, cols } of timestampColumns) {
@@ -78,6 +80,11 @@ export async function importData(formData: FormData) {
         // Comprehensive Column Mapping (CamelCase -> snake_case) for Vercel exports
         // This covers known differences between Vercel export (which uses property names) and D1 schema
         const columnMap: Record<string, string> = {
+            userId: 'user_id',
+            productId: 'product_id',
+            orderId: 'order_id',
+            itemId: 'item_id',
+            messageId: 'message_id',
             // Products
             compareAtPrice: 'compare_at_price',
             isHot: 'is_hot',
@@ -90,9 +97,12 @@ export async function importData(formData: FormData) {
             stockCount: 'stock_count',
             lockedCount: 'locked_count',
             soldCount: 'sold_count',
+            reviewCount: 'review_count',
+            variantGroupId: 'variant_group_id',
+            variantLabel: 'variant_label',
+            purchaseQuestions: 'purchase_questions',
             createdAt: 'created_at',
             // Cards
-            productId: 'product_id',
             cardKey: 'card_key',
             isUsed: 'is_used',
             reservedOrderId: 'reserved_order_id',
@@ -100,26 +110,32 @@ export async function importData(formData: FormData) {
             expiresAt: 'expires_at',
             usedAt: 'used_at',
             // Orders
-            orderId: 'order_id',
             productName: 'product_name',
             tradeNo: 'trade_no',
             paidAt: 'paid_at',
             deliveredAt: 'delivered_at',
-            userId: 'user_id',
             pointsUsed: 'points_used',
             currentPaymentId: 'current_payment_id',
             cardIds: 'card_ids',
             // Login Users
             lastLoginAt: 'last_login_at',
+            lastCheckinAt: 'last_checkin_at',
+            consecutiveDays: 'consecutive_days',
             isBlocked: 'is_blocked',
+            desktopNotificationsEnabled: 'desktop_notifications_enabled',
             // Refund Requests
             adminUsername: 'admin_username',
             adminNote: 'admin_note',
             processedAt: 'processed_at',
             // Settings
             updatedAt: 'updated_at',
-            // Categories
-            // icon, sortOrder covered already
+            // Notification / message tables
+            titleKey: 'title_key',
+            contentKey: 'content_key',
+            isRead: 'is_read',
+            // Broadcast / admin messages
+            targetType: 'target_type',
+            targetValue: 'target_value',
         }
 
         let successCount = 0
