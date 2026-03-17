@@ -621,15 +621,41 @@ export async function saveRefundReclaimCards(enabled: boolean) {
 
 export async function deleteReview(reviewId: number) {
     await checkAdmin()
+    const existing = await db.select({
+        productId: reviews.productId,
+    }).from(reviews).where(eq(reviews.id, reviewId)).limit(1)
+
     await db.delete(reviews).where(eq(reviews.id, reviewId))
+
+    const productId = existing[0]?.productId
+    if (productId) {
+        await recalcProductAggregates(productId)
+        revalidatePath(`/buy/${productId}`)
+    }
+
     revalidatePath('/admin/reviews')
     updateTag('home:ratings')
+    updateTag('home:products')
     revalidatePath('/')
 }
 
 export async function deleteReviewReply(replyId: number) {
     await checkAdmin()
+    const existing = await db.select({
+        productId: reviews.productId,
+    })
+        .from(reviewReplies)
+        .leftJoin(reviews, eq(reviewReplies.reviewId, reviews.id))
+        .where(eq(reviewReplies.id, replyId))
+        .limit(1)
+
     await db.delete(reviewReplies).where(eq(reviewReplies.id, replyId))
+
+    const productId = existing[0]?.productId
+    if (productId) {
+        revalidatePath(`/buy/${productId}`)
+    }
+
     revalidatePath('/admin/reviews')
     revalidatePath('/')
 }
